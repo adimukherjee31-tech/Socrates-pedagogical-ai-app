@@ -2,8 +2,7 @@ import streamlit as st
 import os
 import tempfile
 import google.generativeai as genai
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -28,11 +27,9 @@ with st.sidebar:
         "Simple"
     ])
     
-    # Updated to a Range Slider for custom start/end pages
-    st.info("💡 Large books (2000+ pages) work best if you select a specific range (e.g., 100 pages at a time).")
     page_range = st.slider(
         "Select Page Range to Index", 
-        1, 2500, (1, 200) # Default range: 1 to 200
+        1, 2500, (1, 200) 
     )
     start_page, end_page = page_range
 
@@ -42,8 +39,7 @@ def get_working_model(api_key):
         genai.configure(api_key=api_key)
         models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         clean_models = [m.replace('models/', '') for m in models]
-        
-        for preferred in ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']:
+        for preferred in ['gemini-1.5-flash', 'gemini-1.5-pro']:
             if preferred in clean_models:
                 return preferred
         return clean_models[0] if clean_models else None
@@ -59,32 +55,30 @@ if api_key and uploaded_file:
         llm = ChatGoogleGenerativeAI(
             model=active_model,
             google_api_key=api_key,
-            temperature=0.3
+            temperature=0.4 # Increased slightly for more "creative" emoji use
         )
 
-        # Added start and end page to the cache signature
         @st.cache_resource(show_spinner=False)
-        def get_vector_db(file, start_pg, end_pg):
+        def get_vector_db(file_content, start_pg, end_pg, _api_key):
+            embeddings = GoogleGenerativeAIEmbeddings(
+                model="models/text-embedding-004", 
+                google_api_key=_api_key
+            )
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                tmp.write(file.read())
+                tmp.write(file_content)
                 tmp_path = tmp.name
-            
             loader = PyMuPDFLoader(tmp_path)
-            # Slicing the document: pages are 0-indexed in Python list, 
-            # so page 1 is index 0.
-            docs = loader.load()[start_pg-1 : end_pg]
-            
+            all_docs = loader.load()
+            end_pg = min(end_pg, len(all_docs))
+            docs = all_docs[start_pg-1 : end_pg]
             splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
             chunks = splitter.split_documents(docs)
-            
-            embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
             db = FAISS.from_documents(chunks, embeddings)
             os.remove(tmp_path)
             return db
 
-        with st.spinner(f"Reading pages {start_page} to {end_page}..."):
-            vector_db = get_vector_db(uploaded_file, start_page, end_page)
-            st.sidebar.caption(f"✅ Indexed {end_page - start_page + 1} pages.")
+        with st.spinner(f"🚀 Speed-indexing pages {start_page} to {end_page}..."):
+            vector_db = get_vector_db(uploaded_file.getvalue(), start_page, end_page, api_key)
 
         # --- CHAT ---
         query = st.chat_input("Ask a question from this section...")
@@ -93,24 +87,31 @@ if api_key and uploaded_file:
             with st.chat_message("user"):
                 st.write(query)
 
-            context_docs = vector_db.similarity_search(query, k=4)
+            context_docs = vector_db.similarity_search(query, k=5)
             context_text = "\n\n".join([d.page_content for d in context_docs])
 
+            # Personality Mapping - Refined to enforce aesthetic
             styles = {
-                "Professor": "Professional Academic Tutor. Use bullet points and exam-style headings.",
+                "Professor": "Professional Academic Tutor. Organize with clear headings and aesthetic markers.",
                 "Munnabhai (Hinglish)": "Munnabhai style. Use Hinglish, call user 'Mammu', use funny life analogies.",
-                "Physicswallah UGC-NET Coach": "High-energy, motivational coaching style. Use 'Hello Baccho!', 'Ekdum basic se samjhenge', and 'Selection rukna nahi chahiye'. Focus on JRF/NET exam points.",
+                "Physicswallah UGC-NET Coach": "High-energy, motivational coaching style. Use 'Hello Baccho!', 'Ekdum basic se samjhenge'. Focus on exam points.",
                 "Simple": "Explain like I'm 10 years old with simple examples."
             }
 
+            # STRICTER PROMPT LOGIC
             prompt = ChatPromptTemplate.from_template("""
             You are Socrates, a pedagogical tutor. Use the provided Context to answer the Question.
             
             GROUNDING RULES:
-            1. Search the 'Context' for the answer first. 
-            2. If the answer is found in the Context, explain it and MUST append: "[SOURCE: TEXTBOOK]" at the end.
-            3. If the answer is NOT found in the Context, answer using your general knowledge but you MUST start the response with: "[SOURCE: GENERAL AI KNOWLEDGE - NOT IN PDF]".
-            4. STICKERS: For every point, heading, or list item, use bright, colorful Pinterest-style emojis (like ✨, 🌈, 💡, 🎨, 🚀, 🌸, 🍭, 🎀, 🌟, 🧚‍♀️, 🧸). Do not use standard black bullet points.
+            1. Search the 'Context' for the answer first. Append "[SOURCE: TEXTBOOK]" if found.
+            2. If not in Context, use General Knowledge and start with "[SOURCE: GENERAL AI KNOWLEDGE]".
+            
+            STICKER & FORMATTING RULES (CRITICAL):
+            - NEVER use standard black bullet points (like - or * or •).
+            - Use ONLY bright, colorful Pinterest-style emojis as your bullets/pointers.
+            - Start every new point with a different vibrant emoji (e.g., 🌈, ✨, 🍭, 🎀, 🧚‍♀️, 🎨, 🌸, 🚀, 🌟, 🍬, 🎡).
+            - Use aesthetic symbols like ╰┈➤ or ➼ for sub-points.
+            - Make the response look visually "Pinteresty," vibrant, and colorful.
             
             Context: {context}
             Style/Personality: {personality}
