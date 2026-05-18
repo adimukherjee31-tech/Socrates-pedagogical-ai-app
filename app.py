@@ -11,6 +11,15 @@ from langchain_core.output_parsers import StrOutputParser
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Socrates AI Tutor", layout="wide", page_icon="🎓")
+
+# Custom CSS to make sure list items don't show default black bullets
+st.markdown("""
+    <style>
+    ul { list-style-type: none; }
+    li { list-style-type: none; }
+    </style>
+    """, unsafe_allow_html=True)
+
 st.title("🎓 Socrates: Pedagogical AI Tutor")
 
 # --- SIDEBAR ---
@@ -27,6 +36,7 @@ with st.sidebar:
         "Simple"
     ])
     
+    st.info("🌈 **Color Mode Active**: Using high-vibrancy aesthetic markers.")
     page_range = st.slider(
         "Select Page Range to Index", 
         1, 2500, (1, 200) 
@@ -55,22 +65,24 @@ if api_key and uploaded_file:
         llm = ChatGoogleGenerativeAI(
             model=active_model,
             google_api_key=api_key,
-            temperature=0.4 # Increased slightly for more "creative" emoji use
+            temperature=0.6 # Increased for more colorful and diverse emoji selection
         )
 
         @st.cache_resource(show_spinner=False)
         def get_vector_db(file_content, start_pg, end_pg, _api_key):
             embeddings = GoogleGenerativeAIEmbeddings(
-                model="models/text-embedding-004", 
+                model="models/embedding-001", 
                 google_api_key=_api_key
             )
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                 tmp.write(file_content)
                 tmp_path = tmp.name
+            
             loader = PyMuPDFLoader(tmp_path)
             all_docs = loader.load()
             end_pg = min(end_pg, len(all_docs))
             docs = all_docs[start_pg-1 : end_pg]
+            
             splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
             chunks = splitter.split_documents(docs)
             db = FAISS.from_documents(chunks, embeddings)
@@ -90,28 +102,26 @@ if api_key and uploaded_file:
             context_docs = vector_db.similarity_search(query, k=5)
             context_text = "\n\n".join([d.page_content for d in context_docs])
 
-            # Personality Mapping - Refined to enforce aesthetic
             styles = {
-                "Professor": "Professional Academic Tutor. Organize with clear headings and aesthetic markers.",
-                "Munnabhai (Hinglish)": "Munnabhai style. Use Hinglish, call user 'Mammu', use funny life analogies.",
-                "Physicswallah UGC-NET Coach": "High-energy, motivational coaching style. Use 'Hello Baccho!', 'Ekdum basic se samjhenge'. Focus on exam points.",
-                "Simple": "Explain like I'm 10 years old with simple examples."
+                "Professor": "Professional Academic Tutor. Use bright, colorful aesthetic headers.",
+                "Munnabhai (Hinglish)": "Munnabhai style. Use Hinglish, call user 'Mammu', use funny analogies.",
+                "Physicswallah UGC-NET Coach": "High-energy coach. Use 'Hello Baccho!', 'Selection rukna nahi chahiye!'. Focus on exam patterns.",
+                "Simple": "Explain like I'm 10 years old with colorful analogies."
             }
 
-            # STRICTER PROMPT LOGIC
             prompt = ChatPromptTemplate.from_template("""
             You are Socrates, a pedagogical tutor. Use the provided Context to answer the Question.
             
             GROUNDING RULES:
-            1. Search the 'Context' for the answer first. Append "[SOURCE: TEXTBOOK]" if found.
+            1. Use Context first. Append "[SOURCE: TEXTBOOK]" if found.
             2. If not in Context, use General Knowledge and start with "[SOURCE: GENERAL AI KNOWLEDGE]".
             
-            STICKER & FORMATTING RULES (CRITICAL):
-            - NEVER use standard black bullet points (like - or * or •).
-            - Use ONLY bright, colorful Pinterest-style emojis as your bullets/pointers.
-            - Start every new point with a different vibrant emoji (e.g., 🌈, ✨, 🍭, 🎀, 🧚‍♀️, 🎨, 🌸, 🚀, 🌟, 🍬, 🎡).
-            - Use aesthetic symbols like ╰┈➤ or ➼ for sub-points.
-            - Make the response look visually "Pinteresty," vibrant, and colorful.
+            COLORFUL AESTHETIC RULES (STRICT):
+            - **CRITICAL**: Use ONLY high-vibrancy, bright-colored emojis.
+            - **FORBIDDEN**: Do not use standard bullets (- or * or •). Do not use black and white emojis or monochrome symbols.
+            - **VIBRANT POINTERS**: Start every point with a DIFFERENT bright emoji like 🌈, 🧚‍♀️, 🎀, 🍭, ✨, 🎨, 🌟, 🍬, 🍄, 🦄, 🎡, 🍉, 🧁, 🦋, 🎈.
+            - **SUB-POINTS**: Use ╰┈➤ followed by a colorful emoji.
+            - **STYLE**: The response should look like a bright, Pinterest-inspired digital scrapbook. Every section must pop with color.
             
             Context: {context}
             Style/Personality: {personality}
