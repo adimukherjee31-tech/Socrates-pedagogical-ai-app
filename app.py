@@ -13,38 +13,43 @@ from langchain_core.embeddings import Embeddings
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Socrates AI Tutor", layout="wide", page_icon="🎓")
 
-# CSS: Force colorful emojis and remove black bullets
+# CSS: FORCE COLORFUL EMOJIS & REMOVE BLACK BULLETS
 st.markdown("""
     <style>
-    ul, li { list-style-type: none !important; padding-left: 0 !important; }
+    /* 1. Remove all standard black dots/bullets */
+    ul, li { list-style-type: none !important; padding-left: 0 !important; margin-left: 0 !important; }
+    
+    /* 2. Force emojis to be colorful and font-friendly */
     .stMarkdown p, .stMarkdown li { 
         font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif !important;
-        font-size: 1.15rem !important;
-        line-height: 1.7 !important;
+        font-size: 1.1rem !important;
+        line-height: 1.8 !important;
     }
+    
+    /* 3. Make chat headers pretty */
+    h3 { color: #FF69B4; }
     </style>
     """, unsafe_allow_html=True)
 
 st.title("🎓 Socrates: Pedagogical AI Tutor")
 
-# --- CUSTOM ROBUST EMBEDDINGS (THE FIX) ---
-class StableGoogleEmbeddings(Embeddings):
+# --- THE "NO-MORE-404" EMBEDDING CLASS ---
+class UniversalGoogleEmbeddings(Embeddings):
     def __init__(self, api_key):
-        # Force the use of 'v1' stable API instead of 'v1beta'
-        genai.configure(api_key=api_key, transport='rest')
-        self.model = "models/text-embedding-004"
-        
-        # Verify if 004 exists for this key, otherwise fallback to 001
+        genai.configure(api_key=api_key)
+        # We try the newest model first, then fallback to the legacy name
+        self.model_name = "models/text-embedding-004"
         try:
-            genai.get_model(self.model)
+            genai.embed_content(model=self.model_name, content="test")
         except:
-            self.model = "models/embedding-001"
+            self.model_name = "models/embedding-001"
 
     def embed_documents(self, texts):
-        return [genai.embed_content(model=self.model, content=t, task_type="retrieval_document")["embedding"] for t in texts]
+        # Direct API call bypasses the LangChain 'v1beta' bug
+        return [genai.embed_content(model=self.model_name, content=t, task_type="retrieval_document")["embedding"] for t in texts]
 
     def embed_query(self, text):
-        return genai.embed_content(model=self.model, content=text, task_type="retrieval_query")["embedding"]
+        return genai.embed_content(model=self.model_name, content=text, task_type="retrieval_query")["embedding"]
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -60,27 +65,20 @@ with st.sidebar:
         "Simple"
     ])
     
-    st.info("🎨 **Pinterest Stickers**: Active & Colorful.")
+    st.info("✨ **Pinterest Stickers**: High-Vibrancy Emojis Only.")
     page_range = st.slider("Select Page Range", 1, 2500, (1, 100))
-    start_page, end_page = page_range
+    start_pg, end_pg = page_range
 
 # --- PROCESSING ---
 if api_key and uploaded_file:
     try:
-        # Initialize direct Google SDK
-        genai.configure(api_key=api_key)
+        # Initialize LLM
+        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key, temperature=0.7)
         
-        # Initialize Chat Model (Gemini 1.5 Flash is best for this)
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash", 
-            google_api_key=api_key, 
-            temperature=0.7
-        )
-
         @st.cache_resource(show_spinner=False)
-        def get_vector_db(file_content, start_pg, end_pg, _api_key):
-            # USE OUR NEW STABLE EMBEDDING CLASS
-            embeddings = StableGoogleEmbeddings(_api_key)
+        def get_vector_db(file_content, _start, _end, _key):
+            # Use our direct Embedding fix
+            embeddings = UniversalGoogleEmbeddings(_key)
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                 tmp.write(file_content)
@@ -88,53 +86,53 @@ if api_key and uploaded_file:
             
             loader = PyMuPDFLoader(tmp_path)
             all_docs = loader.load()
-            docs = all_docs[start_pg-1 : min(end_pg, len(all_docs))]
+            docs = all_docs[_start-1 : min(_end, len(all_docs))]
             
-            splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+            splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
             chunks = splitter.split_documents(docs)
             
-            # Create FAISS DB
+            # Create the vector store
             db = FAISS.from_documents(chunks, embeddings)
             os.remove(tmp_path)
             return db
 
-        with st.spinner(f"🚀 Speed-indexing pages {start_page} to {end_page}..."):
-            vector_db = get_vector_db(uploaded_file.getvalue(), start_page, end_page, api_key)
-            st.sidebar.success(f"✅ Ready! Using {StableGoogleEmbeddings(api_key).model}")
+        with st.spinner(f"🚀 Indexing pages {start_pg} to {end_pg}..."):
+            vector_db = get_vector_db(uploaded_file.getvalue(), start_pg, end_pg, api_key)
+            st.sidebar.success("✅ Book Indexed Successfully!")
 
         # --- CHAT ---
-        query = st.chat_input("Ask a question from this section...")
+        query = st.chat_input("Ask a question...")
         
         if query:
             with st.chat_message("user"): st.write(query)
 
-            # Retrieve context
+            # Search for relevant context
             context_docs = vector_db.similarity_search(query, k=5)
             context_text = "\n\n".join([d.page_content for d in context_docs])
 
             styles = {
-                "Professor": "Academic Tutor. Professional headers, clear points.",
-                "Munnabhai (Hinglish)": "Munnabhai style. Use Hinglish and call user 'Mammu'.",
-                "Physicswallah UGC-NET Coach": "High-energy coach. 'Hello Baccho!', 'Selection rukna nahi chahiye!'.",
-                "Simple": "Explain like I'm 10 with very colorful examples."
+                "Professor": "Academic Tutor. Professional but uses aesthetic markers.",
+                "Munnabhai (Hinglish)": "Munnabhai style. Use Hinglish, call user 'Mammu', use funny analogies.",
+                "Physicswallah UGC-NET Coach": "High-energy, motivational coaching style. Use 'Hello Baccho!', 'Selection rukna nahi chahiye!'. Use Hinglish.",
+                "Simple": "Explain like I'm 10 with colorful examples."
             }
 
             prompt = ChatPromptTemplate.from_template("""
-            You are Socrates, a pedagogical tutor. 
+            You are Socrates, a pedagogical tutor. Use the Context to answer the Question.
             
             GROUNDING:
-            - If found in Context: Explain it. End with "[SOURCE: TEXTBOOK]"
-            - If not: Use General Knowledge. Start with "[SOURCE: GENERAL AI KNOWLEDGE]"
+            - If found in Context: Answer and end with "[SOURCE: TEXTBOOK]"
+            - If not: Answer and start with "[SOURCE: GENERAL AI KNOWLEDGE]"
 
-            AESTHETIC & COLOR RULES (STRICT):
-            - NEVER use black/gray dots, dashes, or stars (•, -, *, 🔘).
-            - YOU MUST start EVERY new point with a DIFFERENT bright, colorful Pinterest emoji.
-            - USE THESE ONLY: 🌈, 🍭, 🎀, ✨, 🎨, 🌟, 🍬, 🦋, 🦄, 🎈, 🧁, 🌸, 🎡, 🍓, 🍦, 🍭, 🎠.
-            - SUB-POINTS: Use "╰┈➤ 💖" followed by a different colorful emoji.
-            - Ensure the answer looks like high-vibrancy, aesthetic study notes.
+            PINTEREST STICKER RULES (MANDATORY):
+            - NO BLACK DOTS. NO ASTERISKS. NO DASHES.
+            - Start EVERY single point with a bright, colorful Pinterest emoji sticker.
+            - Use a variety of: 🌈, 🍭, 🎀, ✨, 🎨, 🌟, 🍬, 🦋, 🦄, 🎈, 🧁, 🌸, 🎡, 🍓, 🍦, 🍭.
+            - Sub-points must start with "╰┈➤ 💖" and another colorful emoji.
+            - The final output must look like a VIBRANT digital study scrapbook.
             
             Context: {context}
-            Style: {personality}
+            Style/Personality: {personality}
             Question: {question}
             
             Answer:""")
@@ -148,4 +146,4 @@ if api_key and uploaded_file:
     except Exception as e:
         st.error(f"System Error: {e}")
 else:
-    st.warning("Enter API Key and upload PDF to start.")
+    st.warning("Please enter your API Key and upload a PDF.")
