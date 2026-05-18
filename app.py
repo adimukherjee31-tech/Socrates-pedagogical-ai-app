@@ -13,39 +13,45 @@ from langchain_core.embeddings import Embeddings
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Socrates AI Tutor", layout="wide", page_icon="🎓")
 
-# CSS: FORCE COLORFUL EMOJIS & REMOVE BLACK BULLETS
+# --- CSS NUCLEAR OPTION: REMOVE BLACK DOTS & FORCE COLOR ---
 st.markdown("""
     <style>
-    /* 1. Remove all standard black dots/bullets */
-    ul, li { list-style-type: none !important; padding-left: 0 !important; margin-left: 0 !important; }
+    /* Force delete all standard browser bullets */
+    li::marker { content: none !important; }
+    ul { list-style-type: none !important; padding-left: 0 !important; }
+    li { list-style-type: none !important; padding-left: 0 !important; margin-bottom: 15px !important; }
     
-    /* 2. Force emojis to be colorful and font-friendly */
+    /* Make text readable and emoji-friendly */
     .stMarkdown p, .stMarkdown li { 
+        font-size: 1.15rem !important;
+        line-height: 1.7 !important;
         font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif !important;
-        font-size: 1.1rem !important;
-        line-height: 1.8 !important;
     }
-    
-    /* 3. Make chat headers pretty */
-    h3 { color: #FF69B4; }
     </style>
     """, unsafe_allow_html=True)
 
 st.title("🎓 Socrates: Pedagogical AI Tutor")
 
-# --- THE "NO-MORE-404" EMBEDDING CLASS ---
-class UniversalGoogleEmbeddings(Embeddings):
+# --- THE DEFINITIVE FIX: DYNAMIC MODEL DISCOVERY EMBEDDINGS ---
+class DynamicGoogleEmbeddings(Embeddings):
     def __init__(self, api_key):
         genai.configure(api_key=api_key)
-        # We try the newest model first, then fallback to the legacy name
-        self.model_name = "models/text-embedding-004"
-        try:
-            genai.embed_content(model=self.model_name, content="test")
-        except:
-            self.model_name = "models/embedding-001"
+        self.model_name = None
+        
+        # Ask Google: "Which models do I have access to?"
+        available_models = [m.name for m in genai.list_models() if 'embedContent' in m.supported_generation_methods]
+        
+        # Selection Priority: text-embedding-004 > embedding-001 > anything else
+        if 'models/text-embedding-004' in available_models:
+            self.model_name = 'models/text-embedding-004'
+        elif 'models/embedding-001' in available_models:
+            self.model_name = 'models/embedding-001'
+        elif available_models:
+            self.model_name = available_models[0]
+        else:
+            raise Exception("No embedding models found for this API Key. Please check your Google AI Console.")
 
     def embed_documents(self, texts):
-        # Direct API call bypasses the LangChain 'v1beta' bug
         return [genai.embed_content(model=self.model_name, content=t, task_type="retrieval_document")["embedding"] for t in texts]
 
     def embed_query(self, text):
@@ -65,20 +71,20 @@ with st.sidebar:
         "Simple"
     ])
     
-    st.info("✨ **Pinterest Stickers**: High-Vibrancy Emojis Only.")
+    st.info("✨ **Pinterest Stickers**: Vibrant & Colorful Mode.")
     page_range = st.slider("Select Page Range", 1, 2500, (1, 100))
     start_pg, end_pg = page_range
 
 # --- PROCESSING ---
 if api_key and uploaded_file:
     try:
-        # Initialize LLM
+        # Initialize the Chat Model
         llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key, temperature=0.7)
-        
+
         @st.cache_resource(show_spinner=False)
         def get_vector_db(file_content, _start, _end, _key):
-            # Use our direct Embedding fix
-            embeddings = UniversalGoogleEmbeddings(_key)
+            # Use our Dynamic Discovery fix
+            embeddings = DynamicGoogleEmbeddings(_key)
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                 tmp.write(file_content)
@@ -91,29 +97,29 @@ if api_key and uploaded_file:
             splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
             chunks = splitter.split_documents(docs)
             
-            # Create the vector store
             db = FAISS.from_documents(chunks, embeddings)
             os.remove(tmp_path)
             return db
 
-        with st.spinner(f"🚀 Indexing pages {start_pg} to {end_pg}..."):
+        with st.spinner(f"🚀 Scanning library..."):
             vector_db = get_vector_db(uploaded_file.getvalue(), start_pg, end_pg, api_key)
-            st.sidebar.success("✅ Book Indexed Successfully!")
+            # Show which model was actually discovered/used
+            discovered_model = DynamicGoogleEmbeddings(api_key).model_name
+            st.sidebar.success(f"✅ Ready! (Using: {discovered_model.split('/')[-1]})")
 
         # --- CHAT ---
-        query = st.chat_input("Ask a question...")
+        query = st.chat_input("Ask a question from the book...")
         
         if query:
             with st.chat_message("user"): st.write(query)
 
-            # Search for relevant context
             context_docs = vector_db.similarity_search(query, k=5)
             context_text = "\n\n".join([d.page_content for d in context_docs])
 
             styles = {
-                "Professor": "Academic Tutor. Professional but uses aesthetic markers.",
+                "Professor": "Academic Tutor. Professional yet aesthetic.",
                 "Munnabhai (Hinglish)": "Munnabhai style. Use Hinglish, call user 'Mammu', use funny analogies.",
-                "Physicswallah UGC-NET Coach": "High-energy, motivational coaching style. Use 'Hello Baccho!', 'Selection rukna nahi chahiye!'. Use Hinglish.",
+                "Physicswallah UGC-NET Coach": "High-energy, motivational coaching style. Use 'Hello Baccho!', 'Ekdum basic se samjhenge', 'Selection rukna nahi chahiye!'. Use Hinglish.",
                 "Simple": "Explain like I'm 10 with colorful examples."
             }
 
@@ -121,15 +127,15 @@ if api_key and uploaded_file:
             You are Socrates, a pedagogical tutor. Use the Context to answer the Question.
             
             GROUNDING:
-            - If found in Context: Answer and end with "[SOURCE: TEXTBOOK]"
-            - If not: Answer and start with "[SOURCE: GENERAL AI KNOWLEDGE]"
+            - If found in Context: Answer and MUST end with "[SOURCE: TEXTBOOK]"
+            - If not: Answer and MUST start with "[SOURCE: GENERAL AI KNOWLEDGE]"
 
-            PINTEREST STICKER RULES (MANDATORY):
-            - NO BLACK DOTS. NO ASTERISKS. NO DASHES.
-            - Start EVERY single point with a bright, colorful Pinterest emoji sticker.
-            - Use a variety of: 🌈, 🍭, 🎀, ✨, 🎨, 🌟, 🍬, 🦋, 🦄, 🎈, 🧁, 🌸, 🎡, 🍓, 🍦, 🍭.
-            - Sub-points must start with "╰┈➤ 💖" and another colorful emoji.
-            - The final output must look like a VIBRANT digital study scrapbook.
+            PINTEREST STICKER RULES (STRICT):
+            - NEVER use black dots, gray circles, asterisks, or dashes (-, *, •, 🔘).
+            - START EVERY POINT with a unique, BRIGHT, COLORFUL emoji sticker.
+            - USE ONLY VIVID EMOJIS: 🌈, 🍭, 🎀, ✨, 🎨, 🌟, 🍬, 🦋, 🦄, 🎈, 🧁, 🌸, 🎡, 🍓, 🍦, 🍭, 🎠, 🎨.
+            - SUB-POINTS: Use "╰┈➤ 💖" followed by a DIFFERENT colorful emoji.
+            - The final output must look like a VIBRANT, colorful digital scrapbook.
             
             Context: {context}
             Style/Personality: {personality}
